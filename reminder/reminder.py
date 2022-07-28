@@ -10,7 +10,7 @@ import re
 
 from redbot.core import commands, Config
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.parser import parse, ParserError
 
 from .model import ReminderModel
@@ -101,24 +101,39 @@ class Reminder(commands.Cog):
             except commands.MemberNotFound:
                 member = ctx.author
 
-        match_text: Optional[re.Match]
-        if match_text := REGEX_TEXT.search(text):
-            match_text: str = match_text.groupdict()["text"]
+        match: Optional[re.Match]
+        if match := REGEX_TEXT.search(text):
+            match_text: str = match.groupdict()["text"]
         else:
             match_text = None
 
-        time: tuple[datetime, tuple[str]]
-        try:
-            time = parse(text, fuzzy=True)
-        except ParserError:
-            await ctx.send("Wrong given time, please check the command's example.", delete_after=5)
-            return
+        if text.startswith("in"):
+            time_text: str = text.lstrip("in ")
+
+            if match_text:
+                time_text = time_text.split(f" to {match.groupdict()['text']}")[0]
+
+            time: Optional[timedelta]
+            if not (time := commands.converter.parse_timedelta(time_text)):
+                await ctx.send("Wrong given time, please check the command's example.", delete_after=5)
+                return
+        else:
+            time: tuple[datetime, tuple[str]]
+            try:
+                time = parse(text, fuzzy=True)
+            except ParserError:
+                await ctx.send("Wrong given time, please check the command's example.", delete_after=5)
+                return
         
         channel: discord.TextChannel = ctx.channel
         
         async with self.config.guild(ctx.guild).reminders() as reminders:
             _id: int = int(max(reminders.keys())) + 1 if reminders else 1
-            remaining: int = int(time.timestamp() - datetime.now().timestamp())
+
+            if isinstance(time, timedelta):
+                remaining: int = int(time.total_seconds())
+            else:
+                remaining: int = int(time.timestamp() - datetime.now().timestamp())
 
             reminders[str(_id)] = {
                 "author": None if member == ctx.author else ctx.author.id,
